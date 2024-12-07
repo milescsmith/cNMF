@@ -1,6 +1,42 @@
 [build-system]
-requires = [
-    "setuptools>=42",
-    "wheel"
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "cnmf"
+version = "1.6.0"
+description = "Consensus NMF for scRNA-Seq data"
+readme = "README.md"
+authors = [
+    {name = "Dylan Kotliar", email = "dylkot@gmail.com"},
 ]
-build-backend = "setuptools.build_meta"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "anndata>=0.9",
+    "fastcluster",
+    "matplotlib",
+    "numpy",
+    "palettable",
+    "pandas",
+    "pyyaml",
+    "scanpy",
+    "scikit-learn>=1.0",
+    "scipy",
+    "harmonypy>=0.0.10",
+]
+requires-python = ">=3.10"
+
+[project.urls]
+Homepage = "https://github.com/dylkot/cNMF"
+"Bug Tracker" = "https://github.com/dylkot/cNMF/issues"
+
+[project.scripts]
+cnmf = "cnmf:main"
+[dependency-groups]
+dev = [
+    "ruff>=0.8.0",
+]
