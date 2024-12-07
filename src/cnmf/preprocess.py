@@ -246,33 +246,23 @@ class Preprocess:
                 "data should either be an AnnData object or a list of 2 AnnData objects"
             )
 
-        tp10k = sc.pp.normalize_per_cell(
-            adata_RNA, counts_per_cell_after=librarysize_targetsum, copy=True
-        )
-        adata_RNA, hvgs = self.normalize_batchcorrect(
-            adata_RNA,
-            harmony_vars=harmony_vars,
-            n_top_genes=n_top_rna_genes,
-            librarysize_targetsum=librarysize_targetsum,
-            max_scaled_thresh=max_scaled_thresh,
-            quantile_thresh=quantile_thresh,
-            theta=theta,
-            makeplots=makeplots,
-            max_iter_harmony=max_iter_harmony,
-        )
-
-        if adata_ADT is not None:
+        tp10k = sc.pp.normalize_total(adata_RNA, target_sum=librarysize_targetsum, copy=True)
+        adata_RNA, hvgs = self.normalize_batchcorrect(adata_RNA, harmony_vars=harmony_vars,
+                                                n_top_genes = n_top_rna_genes, 
+                                                librarysize_targetsum= librarysize_targetsum,
+                                                max_scaled_thresh = max_scaled_thresh,
+                                                quantile_thresh = quantile_thresh, theta=theta,
+                                                makeplots=makeplots, max_iter_harmony=max_iter_harmony)
+        
+        if adata_ADT is not None:            
             adata_ADT = adata_ADT[adata_RNA.obs.index, :]
-            sc.pp.normalize_per_cell(
-                adata_ADT, counts_per_cell_after=librarysize_targetsum
-            )
-
-            merge_var = pd.concat([tp10k.var, adata_ADT.var], axis=0)
-            tp10k = sc.AnnData(
-                hstack((tp10k.X, adata_ADT.X)), obs=tp10k.obs, var=merge_var
-            )
-            del adata_ADT
-
+            sc.pp.normalize_total(adata_ADT, target_sum=librarysize_targetsum)
+            
+            merge_var = pd.concat([tp10k.var, adata_ADT.var], axis=0)            
+            tp10k = sc.AnnData(hstack((tp10k.X, adata_ADT.X)), obs=tp10k.obs, var=merge_var)
+            del(adata_ADT)
+            
+            
         if save_output_base is not None:
             sc.write(save_output_base + ".Corrected.HVG.Varnorm.h5ad", adata_RNA)
             sc.write(save_output_base + ".TP10K.h5ad", tp10k)
@@ -343,19 +333,13 @@ class Preprocess:
             )
 
         if harmony_vars is not None:
-            anorm = sc.pp.normalize_per_cell(
-                _adata, counts_per_cell_after=librarysize_targetsum, copy=True
-            )
-            anorm = anorm[:, _adata.var["highly_variable"]]
-            stdscale_quantile_celing(
-                anorm, max_value=max_scaled_thresh, quantile_thresh=quantile_thresh
-            )
-
-            _adata = _adata[:, _adata.var["highly_variable"]]
-            stdscale_quantile_celing(
-                _adata, max_value=max_scaled_thresh, quantile_thresh=quantile_thresh
-            )
-
+            anorm = sc.pp.normalize_total(_adata, target_sum=librarysize_targetsum, copy=True)
+            anorm = anorm[:, _adata.var['highly_variable']]
+            stdscale_quantile_celing(anorm, max_value=max_scaled_thresh, quantile_thresh=quantile_thresh)
+            
+            _adata = _adata[:, _adata.var['highly_variable']]
+            stdscale_quantile_celing(_adata, max_value=max_scaled_thresh, quantile_thresh=quantile_thresh)
+            
             if makeplots:
                 make_count_hist(anorm, num_cells=1000)
 
@@ -387,14 +371,11 @@ class Preprocess:
 
         else:
             if normalize_librarysize:
-                sc.pp.normalize_per_cell(
-                    _adata, counts_per_cell_after=librarysize_targetsum
-                )
-
-            _adata = _adata[:, _adata.var["highly_variable"]]
-            stdscale_quantile_celing(
-                _adata, max_value=max_scaled_thresh, quantile_thresh=quantile_thresh
-            )
+                sc.pp.normalize_total(_adata, target_sum=librarysize_targetsum)
+            
+            
+            _adata = _adata[:, _adata.var['highly_variable']]
+            stdscale_quantile_celing(_adata, max_value=max_scaled_thresh, quantile_thresh=quantile_thresh)
             if makeplots:
                 make_count_hist(_adata, num_cells=1000)
 
@@ -484,10 +465,8 @@ class Preprocess:
         makeplots : boolean, optional (default=True)
             If True, makes a scatter plot of values pre and post correction
         """
-        sc.pp.normalize_per_cell(_adata)
-        stdscale_quantile_celing(
-            _adata, max_value=max_scaled_thresh, quantile_thresh=quantile_thresh
-        )
+        sc.pp.normalize_total(_adata)  
+        stdscale_quantile_celing(_adata, max_value=max_scaled_thresh, quantile_thresh=quantile_thresh)
 
         if issparse(_adata.X):
             res = mutual_info_classif(
