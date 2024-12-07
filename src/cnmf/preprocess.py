@@ -8,6 +8,8 @@ import scanpy as sc
 from scipy.sparse import hstack, issparse
 from sklearn.feature_selection import mutual_info_classif
 
+RNA_AND_ADT_SEPARATE_ADATAS = 2
+
 
 def moe_correct_ridge(Z_orig, Z_cos, Z_corr, R, W, K, Phi_Rk, Phi_moe, lamb):
     Z_corr = Z_orig.copy()
@@ -25,9 +27,7 @@ def stdscale_quantile_celing(_adata, max_value=None, quantile_thresh=None):
     sc.pp.scale(_adata, zero_center=False, max_value=max_value)
     if quantile_thresh is not None:
         if issparse(_adata.X):
-            threshval = np.quantile(
-                np.array(_adata.X.todense()).reshape(-1), quantile_thresh
-            )
+            threshval = np.quantile(np.array(_adata.X.todense()).reshape(-1), quantile_thresh)
         else:
             threshval = np.quantile(_adata.X.reshape(-1), quantile_thresh)
 
@@ -228,41 +228,42 @@ class Preprocess:
             adata_RNA.var_names_make_unique()
             adata_RNA.var["features_renamed"] = adata_RNA.var.index
             adata_ADT = None
-        elif len(_adata) == 2:
+        elif len(_adata) == RNA_AND_ADT_SEPARATE_ADATAS:
             ## RNA and ADT provided as distinct elements of list
             adata_RNA = _adata[0]
             adata_ADT = _adata[1]
             if adata_ADT.shape[0] != adata_RNA.shape[0]:
-                raise Exception(
-                    "ADT and RNA AnnDatas don't have the same number of cells"
-                )
+                msg = "ADT and RNA AnnDatas don't have the same number of cells"
+                raise Exception(msg)
             elif np.sum(adata_ADT.obs.index != adata_RNA.obs.index) > 0:
-                raise Exception(
-                    "Inconsistency of the index for the ADT and RNA AnnDatas"
-                )
+                msg = "Inconsistency of the index for the ADT and RNA AnnDatas"
+                raise Exception(msg)
 
         else:
-            raise Exception(
-                "data should either be an AnnData object or a list of 2 AnnData objects"
-            )
+            msg = "data should either be an AnnData object or a list of 2 AnnData objects"
+            raise Exception(msg)
 
         tp10k = sc.pp.normalize_total(adata_RNA, target_sum=librarysize_targetsum, copy=True)
-        adata_RNA, hvgs = self.normalize_batchcorrect(adata_RNA, harmony_vars=harmony_vars,
-                                                n_top_genes = n_top_rna_genes, 
-                                                librarysize_targetsum= librarysize_targetsum,
-                                                max_scaled_thresh = max_scaled_thresh,
-                                                quantile_thresh = quantile_thresh, theta=theta,
-                                                makeplots=makeplots, max_iter_harmony=max_iter_harmony)
-        
-        if adata_ADT is not None:            
+        adata_RNA, hvgs = self.normalize_batchcorrect(
+            adata_RNA,
+            harmony_vars=harmony_vars,
+            n_top_genes=n_top_rna_genes,
+            librarysize_targetsum=librarysize_targetsum,
+            max_scaled_thresh=max_scaled_thresh,
+            quantile_thresh=quantile_thresh,
+            theta=theta,
+            makeplots=makeplots,
+            max_iter_harmony=max_iter_harmony,
+        )
+
+        if adata_ADT is not None:
             adata_ADT = adata_ADT[adata_RNA.obs.index, :]
             sc.pp.normalize_total(adata_ADT, target_sum=librarysize_targetsum)
-            
-            merge_var = pd.concat([tp10k.var, adata_ADT.var], axis=0)            
+
+            merge_var = pd.concat([tp10k.var, adata_ADT.var], axis=0)
             tp10k = sc.AnnData(hstack((tp10k.X, adata_ADT.X)), obs=tp10k.obs, var=merge_var)
-            del(adata_ADT)
-            
-            
+            del adata_ADT
+
         if save_output_base is not None:
             sc.write(save_output_base + ".Corrected.HVG.Varnorm.h5ad", adata_RNA)
             sc.write(save_output_base + ".TP10K.h5ad", tp10k)
@@ -324,22 +325,19 @@ class Preprocess:
         """
 
         if n_top_genes is not None:
-            sc.pp.highly_variable_genes(
-                _adata, flavor="seurat_v3", n_top_genes=n_top_genes
-            )
+            sc.pp.highly_variable_genes(_adata, flavor="seurat_v3", n_top_genes=n_top_genes)
         elif "highly_variable" not in _adata.var.columns:
-            raise Exception(
-                "If a numeric value for n_top_genes is not provided, you must include a highly_variable column in _adata"
-            )
+            msg = "If a numeric value for n_top_genes is not provided, you must include a highly_variable column in _adata"
+            raise Exception(msg)
 
         if harmony_vars is not None:
             anorm = sc.pp.normalize_total(_adata, target_sum=librarysize_targetsum, copy=True)
-            anorm = anorm[:, _adata.var['highly_variable']]
+            anorm = anorm[:, _adata.var["highly_variable"]]
             stdscale_quantile_celing(anorm, max_value=max_scaled_thresh, quantile_thresh=quantile_thresh)
-            
-            _adata = _adata[:, _adata.var['highly_variable']]
+
+            _adata = _adata[:, _adata.var["highly_variable"]]
             stdscale_quantile_celing(_adata, max_value=max_scaled_thresh, quantile_thresh=quantile_thresh)
-            
+
             if makeplots:
                 make_count_hist(anorm, num_cells=1000)
 
@@ -372,9 +370,8 @@ class Preprocess:
         else:
             if normalize_librarysize:
                 sc.pp.normalize_total(_adata, target_sum=librarysize_targetsum)
-            
-            
-            _adata = _adata[:, _adata.var['highly_variable']]
+
+            _adata = _adata[:, _adata.var["highly_variable"]]
             stdscale_quantile_celing(_adata, max_value=max_scaled_thresh, quantile_thresh=quantile_thresh)
             if makeplots:
                 make_count_hist(_adata, num_cells=1000)
@@ -383,9 +380,7 @@ class Preprocess:
 
         return (_adata, hvgs)
 
-    def harmony_correct_X(
-        self, X, obs, pca, harmony_vars, theta=1, max_iter_harmony=20
-    ):
+    def harmony_correct_X(self, X, obs, pca, harmony_vars, theta=1, max_iter_harmony=20):
         """
         Runs batch correction on the provided data. Specifically it uses
         Harmony to learn the batch correction parameters but rather than just correcting
@@ -416,9 +411,7 @@ class Preprocess:
 
         """
 
-        harmony_res = harmonypy.run_harmony(
-            pca, obs, harmony_vars, max_iter_harmony=max_iter_harmony, theta=theta
-        )
+        harmony_res = harmonypy.run_harmony(pca, obs, harmony_vars, max_iter_harmony=max_iter_harmony, theta=theta)
 
         X_pca_harmony = harmony_res.Z_corr.T
         _, X_corr, _, _ = moe_correct_ridge(
@@ -465,7 +458,7 @@ class Preprocess:
         makeplots : boolean, optional (default=True)
             If True, makes a scatter plot of values pre and post correction
         """
-        sc.pp.normalize_total(_adata)  
+        sc.pp.normalize_total(_adata)
         stdscale_quantile_celing(_adata, max_value=max_scaled_thresh, quantile_thresh=quantile_thresh)
 
         if issparse(_adata.X):
@@ -503,9 +496,7 @@ class Preprocess:
             ax.set_xlabel("MI Rank", fontsize=11)
 
             ylim = ax.get_ylim()
-            ax.vlines(
-                x=n_top_features, ymin=ylim[0], ymax=ylim[1], linestyle="--", color="k"
-            )
+            ax.vlines(x=n_top_features, ymin=ylim[0], ymax=ylim[1], linestyle="--", color="k")
             ax.set_ylim(ylim)
 
         for v in resdf.columns:
