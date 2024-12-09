@@ -10,14 +10,17 @@ import warnings
 from multiprocessing import Pool
 from pathlib import Path
 
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scanpy as sc
 import scipy.sparse as sp
 import yaml
-from fastcluster import linkage
-from scipy.cluster.hierarchy import leaves_list
+from numpy import random, savez_compressed
+
+# from fastcluster import linkage
+from scipy.cluster.hierarchy import leaves_list, linkage
 from scipy.spatial.distance import squareform
 from sklearn.cluster import KMeans
 from sklearn.decomposition import non_negative_factorization
@@ -26,7 +29,7 @@ from sklearn.metrics.pairwise import euclidean_distances
 
 
 def save_df_to_npz(obj, filename):
-    np.savez_compressed(filename, data=obj.values, index=obj.index.values, columns=obj.columns.values)
+    savez_compressed(filename, data=obj.values, index=obj.index.values, columns=obj.columns.values)
 
 
 def save_df_to_text(obj, filename):
@@ -34,7 +37,7 @@ def save_df_to_text(obj, filename):
 
 
 def load_df_from_npz(filename):
-    with np.load(filename, allow_pickle=True) as f:
+    with jnp.load(filename, allow_pickle=True) as f:
         obj = pd.DataFrame(**f)
     return obj
 
@@ -57,7 +60,7 @@ def worker_filter(iterable, worker_index, total_workers):
 
 def fast_ols_all_cols(X, Y):
     pinv = np.linalg.pinv(X)
-    beta = np.dot(pinv, Y)
+    beta = jnp.dot(pinv, Y)
     return beta
 
 
@@ -68,19 +71,19 @@ def fast_ols_all_cols_df(X, Y):
 
 
 def var_sparse_matrix(X):
-    mean = np.array(X.mean(axis=0)).reshape(-1)
+    mean = jnp.array(X.mean(axis=0)).reshape(-1)
     Xcopy = X.copy()
     Xcopy.data **= 2
-    var = np.array(Xcopy.mean(axis=0)).reshape(-1) - (mean**2)
+    var = jnp.array(Xcopy.mean(axis=0)).reshape(-1) - (mean**2)
     return var
 
 
 def get_highvar_genes_sparse(expression, expected_fano_threshold=None, minimal_mean=0.5, numgenes=None):
     # Find high variance genes within those cells
-    gene_mean = np.array(expression.mean(axis=0)).astype(float).reshape(-1)
+    gene_mean = jnp.array(expression.mean(axis=0)).astype(float).reshape(-1)
     E2 = expression.copy()
     E2.data **= 2
-    gene2_mean = np.array(E2.mean(axis=0)).reshape(-1)
+    gene2_mean = jnp.array(E2.mean(axis=0)).reshape(-1)
     gene_var = pd.Series(gene2_mean - (gene_mean**2))
     del E2
     gene_mean = pd.Series(gene_mean)
@@ -88,7 +91,7 @@ def get_highvar_genes_sparse(expression, expected_fano_threshold=None, minimal_m
 
     # Find parameters for expected fano line
     top_genes = gene_mean.sort_values(ascending=False)[:20].index
-    A = (np.sqrt(gene_var) / gene_mean)[top_genes].min()
+    A = (jnp.sqrt(gene_var.to_numpy()) / gene_mean)[top_genes].min()
 
     w_mean_low, w_mean_high = gene_mean.quantile([0.10, 0.90])
     w_fano_low, w_fano_high = gene_fano.quantile([0.10, 0.90])
@@ -96,7 +99,7 @@ def get_highvar_genes_sparse(expression, expected_fano_threshold=None, minimal_m
         (gene_fano > w_fano_low) & (gene_fano < w_fano_high) & (gene_mean > w_mean_low) & (gene_mean < w_mean_high)
     )
     fano_median = gene_fano[winsor_box].median()
-    B = np.sqrt(fano_median)
+    B = jnp.sqrt(fano_median)
 
     gene_expected_fano = (A**2) * gene_mean + (B**2)
     fano_ratio = gene_fano / gene_expected_fano
@@ -142,7 +145,7 @@ def get_highvar_genes(input_counts, expected_fano_threshold=None, minimal_mean=0
 
     # Find parameters for expected fano line
     top_genes = gene_counts_mean.sort_values(ascending=False)[:20].index
-    A = (np.sqrt(gene_counts_var) / gene_counts_mean)[top_genes].min()
+    A = (jnp.sqrt(gene_counts_var) / gene_counts_mean)[top_genes].min()
 
     w_mean_low, w_mean_high = gene_counts_mean.quantile([0.10, 0.90])
     w_fano_low, w_fano_high = gene_counts_fano.quantile([0.10, 0.90])
@@ -153,7 +156,7 @@ def get_highvar_genes(input_counts, expected_fano_threshold=None, minimal_mean=0
         & (gene_counts_mean < w_mean_high)
     )
     fano_median = gene_counts_fano[winsor_box].median()
-    B = np.sqrt(fano_median)
+    B = jnp.sqrt(fano_median)
 
     gene_expected_fano = (A**2) * gene_counts_mean + (B**2)
 
@@ -227,7 +230,7 @@ class cNMF:  # noqa: N801
         """
         if output_dir is None:
             output_dir = Path.cwd()
-        self.output_dir = output_dir
+        self.output_dir = Path(output_dir) if not isinstance(output_dir, Path) else output_dir
         if name is None:
             timezone = datetime.datetime.now(datetime.UTC).astimezone().tzinfo
             now = datetime.datetime.now(tz=timezone)
@@ -431,7 +434,7 @@ class cNMF:  # noqa: N801
                     )
 
         if sp.issparse(input_counts.X) & densify:
-            input_counts.X = np.array(input_counts.X.todense())
+            input_counts.X = jnp.array(input_counts.X.todense())
 
         if tpm_fn is None:
             tpm = compute_tpm(input_counts)
@@ -465,14 +468,14 @@ class cNMF:  # noqa: N801
             sc.write(self.paths["tpm"], tpm)
 
         if sp.issparse(tpm.X):
-            gene_tpm_mean = np.array(tpm.X.mean(axis=0)).reshape(-1)
+            gene_tpm_mean = jnp.array(tpm.X.mean(axis=0)).reshape(-1)
             gene_tpm_stddev = var_sparse_matrix(tpm.X) ** 0.5
         else:
-            gene_tpm_mean = np.array(tpm.X.mean(axis=0)).reshape(-1)
-            gene_tpm_stddev = np.array(tpm.X.std(axis=0, ddof=0)).reshape(-1)
+            gene_tpm_mean = jnp.array(tpm.X.mean(axis=0)).reshape(-1)
+            gene_tpm_stddev = jnp.array(tpm.X.std(axis=0, ddof=0)).reshape(-1)
 
         input_tpm_stats = pd.DataFrame(
-            [gene_tpm_mean, gene_tpm_stddev],
+            [gene_tpm_mean.tolist(), gene_tpm_stddev.tolist()],
             index=["__mean", "__std"],
             columns=tpm.var.index,
         ).T
@@ -539,7 +542,7 @@ class cNMF:  # noqa: N801
             Scanpy AnnData object (cells x genes) containing tpm normalized data matching
             counts
 
-        high_variance_genes_filter : np.array, optional (default=None)
+        high_variance_genes_filter : jnp.array, optional (default=None)
             A pre-specified list of genes considered to be high-variance.
             Only these genes will be used during factorization of the counts matrix.
             Must match the .var index of counts and tpm.
@@ -564,7 +567,7 @@ class cNMF:  # noqa: N801
             if sp.issparse(tpm.X):
                 (gene_counts_stats, gene_fano_params) = get_highvar_genes_sparse(tpm.X, numgenes=num_highvar_genes)
             else:
-                (gene_counts_stats, gene_fano_params) = get_highvar_genes(np.array(tpm.X), numgenes=num_highvar_genes)
+                (gene_counts_stats, gene_fano_params) = get_highvar_genes(jnp.array(tpm.X), numgenes=num_highvar_genes)
 
             high_variance_genes_filter = list(tpm.var.index[gene_counts_stats.high_var.values])
 
@@ -574,20 +577,20 @@ class cNMF:  # noqa: N801
         ## Scale genes to unit variance
         if sp.issparse(tpm.X):
             sc.pp.scale(norm_counts, zero_center=False)
-            if np.isnan(norm_counts.X.data).sum() > 0:
+            if jnp.isnan(norm_counts.X.data).sum() > 0:
                 print("Warning NaNs in normalized counts matrix")
         else:
             norm_counts.X /= norm_counts.X.std(axis=0, ddof=1)
-            if np.isnan(norm_counts.X).sum().sum() > 0:
+            if jnp.isnan(norm_counts.X).sum().sum() > 0:
                 print("Warning NaNs in normalized counts matrix")
 
         ## Save a \n-delimited list of the high-variance genes used for factorization
         open(self.paths["nmf_genes_list"], "w").write("\n".join(high_variance_genes_filter))
 
         ## Check for any cells that have 0 counts of the overdispersed genes
-        zerocells = np.array(norm_counts.X.sum(axis=1) == 0).reshape(-1)
+        zerocells = jnp.array(norm_counts.X.sum(axis=1) == 0).reshape(-1)
         if zerocells.sum() > 0:
-            examples = norm_counts.obs.index[np.ravel(zerocells)]
+            examples = norm_counts.obs.index[jnp.ravel(zerocells)]
             msg = f"Error: {zerocells.sum()} cells have zero counts of overdispersed genes. E.g. {', '.join(examples[:4])}. Filter those cells and re-run or adjust the number of overdispersed genes. Quitting!"
             raise Exception(msg)
 
@@ -636,16 +639,16 @@ class cNMF:  # noqa: N801
             ks = [ks]
 
         # Remove any repeated k values, and order.
-        k_list = sorted(set(ks))
+        k_list = sorted(set(ks.tolist()))
 
         n_runs = len(ks) * n_iter
 
-        np.random.seed(seed=random_state_seed)
-        nmf_seeds = np.random.randint(low=1, high=(2**31) - 1, size=n_runs)
+        random.seed(seed=random_state_seed)
+        nmf_seeds = random.randint(low=1, high=(2**31) - 1, size=n_runs)
 
         replicate_params = []
         for i, (k, r) in enumerate(itertools.product(k_list, range(n_iter))):
-            if not os.path.exists(self.paths["iter_spectra"] % (k, r)):
+            if not os.path.exists(str(self.paths["iter_spectra"]) % (k, r)):
                 replicate_params.append([k, r, nmf_seeds[i], False])
             else:
                 replicate_params.append([k, r, nmf_seeds[i], True])
@@ -678,7 +681,9 @@ class cNMF:  # noqa: N801
         """
         Update the replicate parameters file to indicate jobs that have already completed
         """
-        _nmf_kwargs = yaml.safe_load(open(self.paths["nmf_run_parameters"]), Loader=yaml.FullLoader)
+        _nmf_kwargs = yaml.safe_load(
+            open(self.paths["nmf_run_parameters"]),
+        )  # Loader=yaml.FullLoader)
         replicate_params = load_df_from_npz(self.paths["nmf_replicate_parameters"])
         for i in replicate_params.index:
             if not os.path.exists(
@@ -692,7 +697,7 @@ class cNMF:  # noqa: N801
             else:
                 replicate_params.at[i, "completed"] = True
 
-        remaining = np.sum(~replicate_params["completed"])
+        remaining = jnp.sum(~replicate_params["completed"])
         print(f"{remaining} NMF runs are currently incomplete")
 
         self.save_nmf_iter_params(replicate_params, _nmf_kwargs)
@@ -769,7 +774,9 @@ class cNMF:  # noqa: N801
         """
         run_params = load_df_from_npz(self.paths["nmf_replicate_parameters"])
         norm_counts = sc.read(self.paths["normalized_counts"])
-        _nmf_kwargs = yaml.safe_load(open(self.paths["nmf_run_parameters"]), Loader=yaml.FullLoader)
+        _nmf_kwargs = yaml.safe_load(
+            open(self.paths["nmf_run_parameters"]),
+        )  # Loader=yaml.FullLoader)
 
         if not skip_completed_runs:
             jobs_for_this_worker = worker_filter(range(len(run_params)), worker_i, total_workers)
@@ -789,10 +796,10 @@ class cNMF:  # noqa: N801
             (spectra, _) = self._nmf(norm_counts.X, _nmf_kwargs)
             spectra = pd.DataFrame(
                 spectra,
-                index=np.arange(1, _nmf_kwargs["n_components"] + 1),
+                index=jnp.arange(1, _nmf_kwargs["n_components"] + 1),
                 columns=norm_counts.var.index,
             )
-            save_df_to_npz(spectra, self.paths["iter_spectra"] % (p["n_components"], p["iter"]))
+            save_df_to_npz(spectra, str(self.paths["iter_spectra"]) % (p["n_components"], p["iter"]))
 
     def combine_nmf(self, k, skip_missing_files=False):
         run_params = load_df_from_npz(self.paths["nmf_replicate_parameters"])
@@ -802,7 +809,7 @@ class cNMF:  # noqa: N801
         combined_spectra = []
 
         for _, p in run_params_subset.iterrows():
-            current_file = self.paths["iter_spectra"] % (p["n_components"], p["iter"])
+            current_file = Path(str(self.paths["iter_spectra"]) % (p["n_components"], p["iter"]))
             if not current_file.exists():
                 if not skip_missing_files:
                     print(f"Missing file: {current_file!s}, run with skip_missing=True to override")
@@ -816,7 +823,7 @@ class cNMF:  # noqa: N801
 
         if len(combined_spectra) > 0:
             combined_spectra = pd.concat(combined_spectra, axis=0)
-            save_df_to_npz(combined_spectra, self.paths["merged_spectra"] % k)
+            save_df_to_npz(combined_spectra, str(self.paths["merged_spectra"]) % k)
         else:
             print(f"No spectra found for {k=}")
         return combined_spectra
@@ -837,7 +844,9 @@ class cNMF:  # noqa: N801
             Non-negative spectra of expression programs
         """
 
-        refit_nmf_kwargs = yaml.safe_load(open(self.paths["nmf_run_parameters"]), Loader=yaml.FullLoader)
+        refit_nmf_kwargs = yaml.safe_load(
+            open(self.paths["nmf_run_parameters"]),
+        )  # Loader=yaml.FullLoader)
         if type(spectra) is pd.DataFrame:
             refit_nmf_kwargs.update({"n_components": spectra.shape[0], "H": spectra.values, "update_H": False})
         else:
@@ -923,7 +932,7 @@ class cNMF:  # noqa: N801
             most users
         """
 
-        merged_spectra = load_df_from_npz(self.paths["merged_spectra"] % k)
+        merged_spectra = load_df_from_npz(str(self.paths["merged_spectra"]) % k)
         if norm_counts is None:
             norm_counts = sc.read(self.paths["normalized_counts"])
 
@@ -934,28 +943,28 @@ class cNMF:  # noqa: N801
         n_neighbors = int(local_neighborhood_size * merged_spectra.shape[0] / k)
 
         # Rescale topics such to length of 1.
-        l2_spectra = (merged_spectra.T / np.sqrt((merged_spectra**2).sum(axis=1))).T
+        l2_spectra = (merged_spectra.T / jnp.sqrt((merged_spectra**2).sum(axis=1).to_numpy())).T
 
         if not skip_density_and_return_after_stats:
             # Compute the local density matrix (if not previously cached)
             topics_dist = None
-            if os.path.isfile(self.paths["local_density_cache"] % k):
-                local_density = load_df_from_npz(self.paths["local_density_cache"] % k)
+            if os.path.isfile(str(self.paths["local_density_cache"]) % k):
+                local_density = load_df_from_npz(str(self.paths["local_density_cache"]) % k)
             else:
                 #   first find the full distance matrix
                 topics_dist = euclidean_distances(l2_spectra.values)
                 #   partition based on the first n neighbors
-                partitioning_order = np.argpartition(topics_dist, n_neighbors + 1)[:, : n_neighbors + 1]
+                partitioning_order = jnp.argpartition(topics_dist, n_neighbors + 1)[:, : n_neighbors + 1]
                 #   find the mean over those n_neighbors (excluding self, which has a distance of 0)
                 distance_to_nearest_neighbors = topics_dist[
-                    np.arange(topics_dist.shape[0])[:, None], partitioning_order
+                    jnp.arange(topics_dist.shape[0])[:, None], partitioning_order
                 ]
                 local_density = pd.DataFrame(
                     distance_to_nearest_neighbors.sum(1) / (n_neighbors),
                     columns=["local_density"],
                     index=l2_spectra.index,
                 )
-                save_df_to_npz(local_density, self.paths["local_density_cache"] % k)
+                save_df_to_npz(local_density, str(self.paths["local_density_cache"]) % k)
                 del partitioning_order
                 del distance_to_nearest_neighbors
 
@@ -1008,7 +1017,7 @@ class cNMF:  # noqa: N801
         rf_usages = rf_usages.loc[:, reorder.index]
         norm_usages = norm_usages.loc[:, reorder.index]
         median_spectra = median_spectra.loc[reorder.index, :]
-        rf_usages.columns = np.arange(1, rf_usages.shape[1] + 1)
+        rf_usages.columns = jnp.arange(1, rf_usages.shape[1] + 1)
         norm_usages.columns = rf_usages.columns
         median_spectra.index = rf_usages.columns
 
@@ -1024,7 +1033,7 @@ class cNMF:  # noqa: N801
         # Convert spectra to Z-score units, and obtain results for all genes by running last step of NMF
         # with usages fixed and Z-scored TPM as the input matrix
         if sp.issparse(tpm.X):
-            norm_tpm = (np.array(tpm.X.todense()) - tpm_stats["__mean"].values) / tpm_stats["__std"].values
+            norm_tpm = (tpm.X.todense() - tpm_stats["__mean"].values) / tpm_stats["__std"].values
         else:
             norm_tpm = (tpm.X - tpm_stats["__mean"].values) / tpm_stats["__std"].values
 
@@ -1049,24 +1058,24 @@ class cNMF:  # noqa: N801
 
         save_df_to_npz(
             median_spectra,
-            self.paths["consensus_spectra"] % (k, density_threshold_repl),
+            str(self.paths["consensus_spectra"]) % (k, density_threshold_repl),
         )
-        save_df_to_npz(rf_usages, self.paths["consensus_usages"] % (k, density_threshold_repl))
+        save_df_to_npz(rf_usages, str(self.paths["consensus_usages"]) % (k, density_threshold_repl))
         # save_df_to_npz(consensus_stats, self.paths['consensus_stats']%(k, density_threshold_repl))
         save_df_to_text(
             median_spectra,
-            self.paths["consensus_spectra__txt"] % (k, density_threshold_repl),
+            str(self.paths["consensus_spectra__txt"]) % (k, density_threshold_repl),
         )
-        save_df_to_text(rf_usages, self.paths["consensus_usages__txt"] % (k, density_threshold_repl))
-        save_df_to_npz(spectra_tpm, self.paths["gene_spectra_tpm"] % (k, density_threshold_repl))
+        save_df_to_text(rf_usages, str(self.paths["consensus_usages__txt"]) % (k, density_threshold_repl))
+        save_df_to_npz(spectra_tpm, str(self.paths["gene_spectra_tpm"]) % (k, density_threshold_repl))
         save_df_to_text(
             spectra_tpm,
-            self.paths["gene_spectra_tpm__txt"] % (k, density_threshold_repl),
+            str(self.paths["gene_spectra_tpm__txt"]) % (k, density_threshold_repl),
         )
-        save_df_to_npz(usage_coef, self.paths["gene_spectra_score"] % (k, density_threshold_repl))
+        save_df_to_npz(usage_coef, str(self.paths["gene_spectra_score"]) % (k, density_threshold_repl))
         save_df_to_text(
             usage_coef,
-            self.paths["gene_spectra_score__txt"] % (k, density_threshold_repl),
+            str(self.paths["gene_spectra_score__txt"]) % (k, density_threshold_repl),
         )
         if show_clustering:
             if topics_dist is None:
@@ -1078,7 +1087,7 @@ class cNMF:  # noqa: N801
 
             spectra_order = []
             for cl in sorted(set(kmeans_cluster_labels)):
-                cl_filter = kmeans_cluster_labels == cl
+                cl_filter = kmeans_cluster_labels.values == cl
 
                 if cl_filter.sum() > 1:
                     cl_dist = squareform(topics_dist[cl_filter, :][:, cl_filter], checks=False)
@@ -1086,10 +1095,10 @@ class cNMF:  # noqa: N801
                     cl_link = linkage(cl_dist, "average")
                     cl_leaves_order = leaves_list(cl_link)
 
-                    spectra_order += list(np.where(cl_filter)[0][cl_leaves_order])
+                    spectra_order += list(jnp.where(cl_filter)[0][cl_leaves_order])
                 else:
                     ## Corner case where a component only has one element
-                    spectra_order += list(np.where(cl_filter)[0])
+                    spectra_order += list(jnp.where(cl_filter)[0])
 
             import matplotlib.pyplot as plt
             from matplotlib import gridspec
@@ -1172,7 +1181,7 @@ class cNMF:  # noqa: N801
                 frameon=True,
                 title="Local density histogram",
             )
-            hist_ax.hist(local_density.values, bins=np.linspace(0, 1, 50))
+            hist_ax.hist(local_density.values, bins=jnp.linspace(0, 1, 50))
             hist_ax.yaxis.tick_right()
 
             xlim = hist_ax.get_xlim()
@@ -1206,14 +1215,14 @@ class cNMF:  # noqa: N801
             fig.colorbar(
                 dist_im,
                 cax=cbar_ax,
-                ticks=np.linspace(vmin, vmax, 3),
+                ticks=jnp.linspace(vmin, vmax, 3),
                 orientation="horizontal",
             )
 
-            # hist_ax.hist(local_density.values, bins=np.linspace(0, 1, 50))
+            # hist_ax.hist(local_density.values, bins=jnp.linspace(0, 1, 50))
             # hist_ax.yaxis.tick_right()
 
-            fig.savefig(self.paths["clustering_plot"] % (k, density_threshold_repl), dpi=250)
+            fig.savefig(str(self.paths["clustering_plot"]) % (k, density_threshold_repl), dpi=250)
             if close_clustergram_fig:
                 plt.close(fig)
 
@@ -1233,7 +1242,7 @@ class cNMF:  # noqa: N801
             Threshold for filtering outlier spectra. 2.0 or greater applies no filter.
         """
         density_threshold_repl = str(density_threshold).replace(".", "_")
-        tpmfn = self.paths["gene_spectra_tpm__txt"] % (k, density_threshold_repl)
+        tpmfn = str(self.paths["gene_spectra_tpm__txt"]) % (k, density_threshold_repl)
         spectra_tpm = pd.read_csv(tpmfn, index_col=0, sep="\t")
         hvgs = open(self.paths["nmf_genes_list"]).read().split("\n")
 
@@ -1250,10 +1259,10 @@ class cNMF:  # noqa: N801
         ref_spectra = spectra_tpm_varnorm[hvgs].copy()
         ref_spectra.index = "GEP" + ref_spectra.index.astype("str")
 
-        save_df_to_npz(ref_spectra, self.paths["starcat_spectra"] % (k, density_threshold_repl))
+        save_df_to_npz(ref_spectra, str(self.paths["starcat_spectra"]) % (k, density_threshold_repl))
         save_df_to_text(
             ref_spectra,
-            self.paths["starcat_spectra__txt"] % (k, density_threshold_repl),
+            str(self.paths["starcat_spectra__txt"]) % (k, density_threshold_repl),
         )
 
     def k_selection_plot(self, close_fig=False):
@@ -1330,15 +1339,15 @@ class cNMF:  # noqa: N801
         spectra_tpm - Coeffecients for contribution of each gene to each program (K x genes) in TPM units
         top_genes - ranked list of marker genes per GEP (n_top_genes X K)
         """
-        scorefn = self.paths["gene_spectra_score__txt"] % (
+        scorefn = str(self.paths["gene_spectra_score__txt"]) % (
             K,
             str(density_threshold).replace(".", "_"),
         )
-        tpmfn = self.paths["gene_spectra_tpm__txt"] % (
+        tpmfn = str(self.paths["gene_spectra_tpm__txt"]) % (
             K,
             str(density_threshold).replace(".", "_"),
         )
-        usagefn = self.paths["consensus_usages__txt"] % (
+        usagefn = str(self.paths["consensus_usages__txt"]) % (
             K,
             str(density_threshold).replace(".", "_"),
         )

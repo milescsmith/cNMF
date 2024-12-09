@@ -102,3 +102,6 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+Tutorials/example_PBMC/
+Tutorials/filtered_gene_bc_matrices/
