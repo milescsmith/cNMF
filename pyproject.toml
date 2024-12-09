@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cnmf"
-version = "1.6.0"
+version = "1.7.0"
 description = "Consensus NMF for scRNA-Seq data"
 readme = "README.md"
 authors = [
@@ -16,19 +16,20 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dependencies = [
-    "anndata>=0.9",
-    "fastcluster",
-    "matplotlib",
-    "numpy",
-    "palettable",
-    "pandas",
-    "pyyaml",
-    "scanpy",
-    "scikit-learn>=1.0",
-    "scipy",
+    "anndata>=0.11.1",
+    "matplotlib>=3.9.3",
+    "numpy>=2.0.2",
+    "palettable>=3.3.3",
+    "pandas>=2.2.3",
+    "pyyaml>=6.0.2",
+    "scanpy>=1.10.4",
+    "scikit-learn>=1.6.0",
+    "scipy>=1.14.1",
     "harmonypy>=0.0.10",
+    "jax>=0.4.36",
+    "jax-metal>=0.1.1; sys_platform == 'macos'"
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 
 [project.urls]
 Homepage = "https://github.com/dylkot/cNMF"
@@ -36,6 +37,7 @@ Homepage = "https://github.com/dylkot/cNMF"
 
 [project.scripts]
 cnmf = "cnmf:main"
+
 [dependency-groups]
 dev = [
     "ruff>=0.8.0",
