@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cnmf"
-version = "1.7.0"
+version = "1.8.0"
 description = "Consensus NMF for scRNA-Seq data"
 readme = "README.md"
 authors = [
@@ -38,6 +38,10 @@ Homepage = "https://github.com/dylkot/cNMF"
 [project.scripts]
 cnmf = "cnmf:main"
 
+[project.optional-dependencies]
+cuda12 = [
+    "jax[cuda12]>=0.4.37",
+]
 [dependency-groups]
 dev = [
     "ruff>=0.8.0",
