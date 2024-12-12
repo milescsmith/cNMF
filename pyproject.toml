@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cnmf"
-version = "1.8.0"
+version = "1.8.1"
 description = "Consensus NMF for scRNA-Seq data"
 readme = "README.md"
 authors = [
@@ -20,7 +20,7 @@ dependencies = [
     "matplotlib>=3.9.3",
     "numpy>=2.0.2",
     "palettable>=3.3.3",
-    "pandas>=2.2.3",
+    "pandas>=2.0",
     "pyyaml>=6.0.2",
     "scanpy>=1.10.4",
     "scikit-learn>=1.6.0",
