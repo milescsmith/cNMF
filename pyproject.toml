@@ -44,12 +44,7 @@ jax = [
     "jax>=0.4.36",
     "jax-metal>=0.1.1; sys_platform == 'macos'"
 ]
-cupy = [
-    "cupy-cuda12x>=13.3.0",
-]
-cupy11 = [
-    "cupy-cuda11x>=13.3.0",
-]
+
 [dependency-groups]
 dev = [
     "ruff>=0.8.0",

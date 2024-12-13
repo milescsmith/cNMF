@@ -14,11 +14,8 @@ RNA_AND_ADT_SEPARATE_ADATAS = 2
 
 try:
     jax_found = find_spec("jax")
-    cupy_found = find_spec("cupy")
     if jax_found:
         import jax.numpy as np
-    elif cupy_found:
-        import cupy as np
     else:
         import numpy as np
 except ImportError:
