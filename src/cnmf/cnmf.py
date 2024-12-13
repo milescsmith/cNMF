@@ -31,26 +31,21 @@ from sklearn.metrics.pairwise import euclidean_distances
 # and leave this hack
 try:
     jax_found = find_spec("jax")
-    cupy_found = find_spec("cupy")
     if jax_found:
         import jax.numpy as np
-    elif cupy_found:
-        import cupy as np
     else:
         import numpy as np
 except ImportError:
     import numpy as np
 
 
-
 if platform == "macos":
     from numpy.linalg import pinv
 elif jax_found:
     from jax.numpy.linalg import pinv
-elif cupy_found:
-    from cupy.linalg import pinv
 else:
     from numpy.linalg import pinv
+
 
 def save_df_to_npz(obj, filename):
     savez_compressed(filename, data=obj.values, index=obj.index.values, columns=obj.columns.values)
@@ -596,7 +591,7 @@ class cNMF:  # noqa: N801
             high_variance_genes_filter = list(tpm.var.index[gene_counts_stats.high_var.values])
 
         ## Subset out high-variance genes
-        norm_counts = counts[:, high_variance_genes_filter]
+        norm_counts = counts[:, high_variance_genes_filter].copy()
 
         ## Scale genes to unit variance
         if sp.issparse(tpm.X):
@@ -1109,20 +1104,24 @@ class cNMF:  # noqa: N801
                 # (but the previously computed topics_dist was not!)
                 topics_dist = topics_dist[density_filter.values, :][:, density_filter.values]
 
-            spectra_order = []
-            for cl in sorted(set(kmeans_cluster_labels)):
-                cl_filter = kmeans_cluster_labels.values == cl
-
+            def determine_spectra_order(cl, kmeans_values):
+                cl_filter = kmeans_values == cl
                 if cl_filter.sum() > 1:
                     cl_dist = squareform(topics_dist[cl_filter, :][:, cl_filter], checks=False)
                     cl_dist[cl_dist < 0] = 0  # Rarely get floating point arithmetic issues
                     cl_link = linkage(cl_dist, "average")
                     cl_leaves_order = leaves_list(cl_link)
 
-                    spectra_order += list(np.where(cl_filter)[0][cl_leaves_order])
+                    return_cl = np.where(cl_filter)[0][cl_leaves_order]
+                    return list(return_cl)
+
                 else:
                     ## Corner case where a component only has one element
-                    spectra_order += list(np.where(cl_filter)[0])
+                    return list(np.where(cl_filter)[0])
+
+            spectra_order = np.hstack(
+                [determine_spectra_order(cl, kmeans_cluster_labels.values) for cl in sorted(set(kmeans_cluster_labels))]
+            )
 
             import matplotlib.pyplot as plt
             from matplotlib import gridspec
