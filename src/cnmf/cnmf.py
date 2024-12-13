@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-
 import datetime
 import errno
 import itertools
@@ -7,12 +6,12 @@ import os
 import subprocess
 import uuid
 import warnings
+from importlib.util import find_spec
 from multiprocessing import Pool
 from pathlib import Path
+from sys import platform
 
-import jax.numpy as jnp
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import scanpy as sc
 import scipy.sparse as sp
@@ -27,6 +26,31 @@ from sklearn.decomposition import non_negative_factorization
 from sklearn.metrics import silhouette_score
 from sklearn.metrics.pairwise import euclidean_distances
 
+# cupy has the `cupy.get_array_module()` that would transparently take care of this
+# but I don't yet know if cupy or jax is a better option, so include them both
+# and leave this hack
+try:
+    jax_found = find_spec("jax")
+    cupy_found = find_spec("cupy")
+    if jax_found:
+        import jax.numpy as np
+    elif cupy_found:
+        import cupy as np
+    else:
+        import numpy as np
+except ImportError:
+    import numpy as np
+
+
+
+if platform == "macos":
+    from numpy.linalg import pinv
+elif jax_found:
+    from jax.numpy.linalg import pinv
+elif cupy_found:
+    from cupy.linalg import pinv
+else:
+    from numpy.linalg import pinv
 
 def save_df_to_npz(obj, filename):
     savez_compressed(filename, data=obj.values, index=obj.index.values, columns=obj.columns.values)
@@ -37,7 +61,7 @@ def save_df_to_text(obj, filename):
 
 
 def load_df_from_npz(filename):
-    with jnp.load(filename, allow_pickle=True) as f:
+    with np.load(filename, allow_pickle=True) as f:
         obj = pd.DataFrame(**f)
     return obj
 
@@ -59,8 +83,8 @@ def worker_filter(iterable, worker_index, total_workers):
 
 
 def fast_ols_all_cols(X, Y):
-    pinv = np.linalg.pinv(X)
-    beta = jnp.dot(pinv, Y)
+    pinv_res = pinv(X)
+    beta = np.dot(pinv_res, Y)
     return beta
 
 
@@ -71,19 +95,19 @@ def fast_ols_all_cols_df(X, Y):
 
 
 def var_sparse_matrix(X):
-    mean = jnp.array(X.mean(axis=0)).reshape(-1)
+    mean = np.array(X.mean(axis=0)).reshape(-1)
     Xcopy = X.copy()
     Xcopy.data **= 2
-    var = jnp.array(Xcopy.mean(axis=0)).reshape(-1) - (mean**2)
+    var = np.array(Xcopy.mean(axis=0)).reshape(-1) - (mean**2)
     return var
 
 
 def get_highvar_genes_sparse(expression, expected_fano_threshold=None, minimal_mean=0.5, numgenes=None):
     # Find high variance genes within those cells
-    gene_mean = jnp.array(expression.mean(axis=0)).astype(float).reshape(-1)
+    gene_mean = np.array(expression.mean(axis=0)).astype(float).reshape(-1)
     E2 = expression.copy()
     E2.data **= 2
-    gene2_mean = jnp.array(E2.mean(axis=0)).reshape(-1)
+    gene2_mean = np.array(E2.mean(axis=0)).reshape(-1)
     gene_var = pd.Series(gene2_mean - (gene_mean**2))
     del E2
     gene_mean = pd.Series(gene_mean)
@@ -91,7 +115,7 @@ def get_highvar_genes_sparse(expression, expected_fano_threshold=None, minimal_m
 
     # Find parameters for expected fano line
     top_genes = gene_mean.sort_values(ascending=False)[:20].index
-    A = (jnp.sqrt(gene_var.to_numpy()) / gene_mean)[top_genes].min()
+    A = (np.sqrt(gene_var.to_numpy()) / gene_mean)[top_genes].min()
 
     w_mean_low, w_mean_high = gene_mean.quantile([0.10, 0.90])
     w_fano_low, w_fano_high = gene_fano.quantile([0.10, 0.90])
@@ -99,7 +123,7 @@ def get_highvar_genes_sparse(expression, expected_fano_threshold=None, minimal_m
         (gene_fano > w_fano_low) & (gene_fano < w_fano_high) & (gene_mean > w_mean_low) & (gene_mean < w_mean_high)
     )
     fano_median = gene_fano[winsor_box].median()
-    B = jnp.sqrt(fano_median)
+    B = np.sqrt(fano_median)
 
     gene_expected_fano = (A**2) * gene_mean + (B**2)
     fano_ratio = gene_fano / gene_expected_fano
@@ -145,7 +169,7 @@ def get_highvar_genes(input_counts, expected_fano_threshold=None, minimal_mean=0
 
     # Find parameters for expected fano line
     top_genes = gene_counts_mean.sort_values(ascending=False)[:20].index
-    A = (jnp.sqrt(gene_counts_var) / gene_counts_mean)[top_genes].min()
+    A = (np.sqrt(gene_counts_var) / gene_counts_mean)[top_genes].min()
 
     w_mean_low, w_mean_high = gene_counts_mean.quantile([0.10, 0.90])
     w_fano_low, w_fano_high = gene_counts_fano.quantile([0.10, 0.90])
@@ -156,7 +180,7 @@ def get_highvar_genes(input_counts, expected_fano_threshold=None, minimal_mean=0
         & (gene_counts_mean < w_mean_high)
     )
     fano_median = gene_counts_fano[winsor_box].median()
-    B = jnp.sqrt(fano_median)
+    B = np.sqrt(fano_median)
 
     gene_expected_fano = (A**2) * gene_counts_mean + (B**2)
 
@@ -434,7 +458,7 @@ class cNMF:  # noqa: N801
                     )
 
         if sp.issparse(input_counts.X) & densify:
-            input_counts.X = jnp.array(input_counts.X.todense())
+            input_counts.X = np.array(input_counts.X.todense())
 
         if tpm_fn is None:
             tpm = compute_tpm(input_counts)
@@ -468,11 +492,11 @@ class cNMF:  # noqa: N801
             sc.write(self.paths["tpm"], tpm)
 
         if sp.issparse(tpm.X):
-            gene_tpm_mean = jnp.array(tpm.X.mean(axis=0)).reshape(-1)
+            gene_tpm_mean = np.array(tpm.X.mean(axis=0)).reshape(-1)
             gene_tpm_stddev = var_sparse_matrix(tpm.X) ** 0.5
         else:
-            gene_tpm_mean = jnp.array(tpm.X.mean(axis=0)).reshape(-1)
-            gene_tpm_stddev = jnp.array(tpm.X.std(axis=0, ddof=0)).reshape(-1)
+            gene_tpm_mean = np.array(tpm.X.mean(axis=0)).reshape(-1)
+            gene_tpm_stddev = np.array(tpm.X.std(axis=0, ddof=0)).reshape(-1)
 
         input_tpm_stats = pd.DataFrame(
             [gene_tpm_mean.tolist(), gene_tpm_stddev.tolist()],
@@ -542,7 +566,7 @@ class cNMF:  # noqa: N801
             Scanpy AnnData object (cells x genes) containing tpm normalized data matching
             counts
 
-        high_variance_genes_filter : jnp.array, optional (default=None)
+        high_variance_genes_filter : np.array, optional (default=None)
             A pre-specified list of genes considered to be high-variance.
             Only these genes will be used during factorization of the counts matrix.
             Must match the .var index of counts and tpm.
@@ -567,7 +591,7 @@ class cNMF:  # noqa: N801
             if sp.issparse(tpm.X):
                 (gene_counts_stats, gene_fano_params) = get_highvar_genes_sparse(tpm.X, numgenes=num_highvar_genes)
             else:
-                (gene_counts_stats, gene_fano_params) = get_highvar_genes(jnp.array(tpm.X), numgenes=num_highvar_genes)
+                (gene_counts_stats, gene_fano_params) = get_highvar_genes(np.array(tpm.X), numgenes=num_highvar_genes)
 
             high_variance_genes_filter = list(tpm.var.index[gene_counts_stats.high_var.values])
 
@@ -577,20 +601,20 @@ class cNMF:  # noqa: N801
         ## Scale genes to unit variance
         if sp.issparse(tpm.X):
             sc.pp.scale(norm_counts, zero_center=False)
-            if jnp.isnan(norm_counts.X.data).sum() > 0:
+            if np.isnan(norm_counts.X.data).sum() > 0:
                 print("Warning NaNs in normalized counts matrix")
         else:
             norm_counts.X /= norm_counts.X.std(axis=0, ddof=1)
-            if jnp.isnan(norm_counts.X).sum().sum() > 0:
+            if np.isnan(norm_counts.X).sum().sum() > 0:
                 print("Warning NaNs in normalized counts matrix")
 
         ## Save a \n-delimited list of the high-variance genes used for factorization
         open(self.paths["nmf_genes_list"], "w").write("\n".join(high_variance_genes_filter))
 
         ## Check for any cells that have 0 counts of the overdispersed genes
-        zerocells = jnp.array(norm_counts.X.sum(axis=1) == 0).reshape(-1)
+        zerocells = np.array(norm_counts.X.sum(axis=1) == 0).reshape(-1)
         if zerocells.sum() > 0:
-            examples = norm_counts.obs.index[jnp.ravel(zerocells)]
+            examples = norm_counts.obs.index[np.ravel(zerocells)]
             msg = f"Error: {zerocells.sum()} cells have zero counts of overdispersed genes. E.g. {', '.join(examples[:4])}. Filter those cells and re-run or adjust the number of overdispersed genes. Quitting!"
             raise Exception(msg)
 
@@ -697,7 +721,7 @@ class cNMF:  # noqa: N801
             else:
                 replicate_params.at[i, "completed"] = True
 
-        remaining = jnp.sum(~replicate_params["completed"])
+        remaining = np.sum(~replicate_params["completed"])
         print(f"{remaining} NMF runs are currently incomplete")
 
         self.save_nmf_iter_params(replicate_params, _nmf_kwargs)
@@ -796,7 +820,7 @@ class cNMF:  # noqa: N801
             (spectra, _) = self._nmf(norm_counts.X, _nmf_kwargs)
             spectra = pd.DataFrame(
                 spectra,
-                index=jnp.arange(1, _nmf_kwargs["n_components"] + 1),
+                index=np.arange(1, _nmf_kwargs["n_components"] + 1),
                 columns=norm_counts.var.index,
             )
             save_df_to_npz(spectra, str(self.paths["iter_spectra"]) % (p["n_components"], p["iter"]))
@@ -943,7 +967,7 @@ class cNMF:  # noqa: N801
         n_neighbors = int(local_neighborhood_size * merged_spectra.shape[0] / k)
 
         # Rescale topics such to length of 1.
-        l2_spectra = (merged_spectra.T / jnp.sqrt((merged_spectra**2).sum(axis=1).to_numpy())).T
+        l2_spectra = (merged_spectra.T / np.sqrt((merged_spectra**2).sum(axis=1).to_numpy())).T
 
         if not skip_density_and_return_after_stats:
             # Compute the local density matrix (if not previously cached)
@@ -954,10 +978,10 @@ class cNMF:  # noqa: N801
                 #   first find the full distance matrix
                 topics_dist = euclidean_distances(l2_spectra.values)
                 #   partition based on the first n neighbors
-                partitioning_order = jnp.argpartition(topics_dist, n_neighbors + 1)[:, : n_neighbors + 1]
+                partitioning_order = np.argpartition(topics_dist, n_neighbors + 1)[:, : n_neighbors + 1]
                 #   find the mean over those n_neighbors (excluding self, which has a distance of 0)
                 distance_to_nearest_neighbors = topics_dist[
-                    jnp.arange(topics_dist.shape[0])[:, None], partitioning_order
+                    np.arange(topics_dist.shape[0])[:, None], partitioning_order
                 ]
                 local_density = pd.DataFrame(
                     distance_to_nearest_neighbors.sum(1) / (n_neighbors),
@@ -1017,7 +1041,7 @@ class cNMF:  # noqa: N801
         rf_usages = rf_usages.loc[:, reorder.index]
         norm_usages = norm_usages.loc[:, reorder.index]
         median_spectra = median_spectra.loc[reorder.index, :]
-        rf_usages.columns = jnp.arange(1, rf_usages.shape[1] + 1)
+        rf_usages.columns = np.arange(1, rf_usages.shape[1] + 1)
         norm_usages.columns = rf_usages.columns
         median_spectra.index = rf_usages.columns
 
@@ -1095,10 +1119,10 @@ class cNMF:  # noqa: N801
                     cl_link = linkage(cl_dist, "average")
                     cl_leaves_order = leaves_list(cl_link)
 
-                    spectra_order += list(jnp.where(cl_filter)[0][cl_leaves_order])
+                    spectra_order += list(np.where(cl_filter)[0][cl_leaves_order])
                 else:
                     ## Corner case where a component only has one element
-                    spectra_order += list(jnp.where(cl_filter)[0])
+                    spectra_order += list(np.where(cl_filter)[0])
 
             import matplotlib.pyplot as plt
             from matplotlib import gridspec
@@ -1181,7 +1205,7 @@ class cNMF:  # noqa: N801
                 frameon=True,
                 title="Local density histogram",
             )
-            hist_ax.hist(local_density.values, bins=jnp.linspace(0, 1, 50))
+            hist_ax.hist(local_density.values, bins=np.linspace(0, 1, 50))
             hist_ax.yaxis.tick_right()
 
             xlim = hist_ax.get_xlim()
@@ -1215,11 +1239,11 @@ class cNMF:  # noqa: N801
             fig.colorbar(
                 dist_im,
                 cax=cbar_ax,
-                ticks=jnp.linspace(vmin, vmax, 3),
+                ticks=np.linspace(vmin, vmax, 3),
                 orientation="horizontal",
             )
 
-            # hist_ax.hist(local_density.values, bins=jnp.linspace(0, 1, 50))
+            # hist_ax.hist(local_density.values, bins=np.linspace(0, 1, 50))
             # hist_ax.yaxis.tick_right()
 
             fig.savefig(str(self.paths["clustering_plot"]) % (k, density_threshold_repl), dpi=250)

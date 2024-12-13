@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cnmf"
-version = "1.8.1"
+version = "1.9.0"
 description = "Consensus NMF for scRNA-Seq data"
 readme = "README.md"
 authors = [
@@ -26,8 +26,6 @@ dependencies = [
     "scikit-learn>=1.6.0",
     "scipy>=1.14.1",
     "harmonypy>=0.0.10",
-    "jax>=0.4.36",
-    "jax-metal>=0.1.1; sys_platform == 'macos'"
 ]
 requires-python = ">=3.10,<3.13"
 
@@ -41,6 +39,16 @@ cnmf = "cnmf:main"
 [project.optional-dependencies]
 cuda12 = [
     "jax[cuda12]>=0.4.37",
+]
+jax = [
+    "jax>=0.4.36",
+    "jax-metal>=0.1.1; sys_platform == 'macos'"
+]
+cupy = [
+    "cupy-cuda12x>=13.3.0",
+]
+cupy11 = [
+    "cupy-cuda11x>=13.3.0",
 ]
 [dependency-groups]
 dev = [
