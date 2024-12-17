@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cnmf"
-version = "1.9.0"
+version = "1.9.999"
 description = "Consensus NMF for scRNA-Seq data"
 readme = "README.md"
 authors = [

@@ -4,33 +4,25 @@ from importlib.util import find_spec
 import harmonypy
 import matplotlib.pyplot as plt
 import pandas as pd
+import jax.numpy as jnp
+import numpy as np
 import scanpy as sc
-from numpy import random
 from scipy.sparse import hstack, issparse
 from sklearn.feature_selection import mutual_info_classif
 
 RNA_AND_ADT_SEPARATE_ADATAS = 2
 
 
-try:
-    jax_found = find_spec("jax")
-    if jax_found:
-        import jax.numpy as np
-    else:
-        import numpy as np
-except ImportError:
-    import numpy as np
-
 
 def moe_correct_ridge(Z_orig, Z_cos, Z_corr, R, W, K, Phi_Rk, Phi_moe, lamb):
     Z_corr = Z_orig.copy()
     for i in range(K):
-        Phi_Rk = np.multiply(Phi_moe, R[i, :])
-        x = np.dot(Phi_Rk, Phi_moe.T) + lamb
-        W = np.dot(np.dot(np.linalg.inv(x), Phi_Rk), Z_orig.T)
+        Phi_Rk = jnp.multiply(Phi_moe, R[i, :])
+        x = jnp.dot(Phi_Rk, Phi_moe.T) + lamb
+        W = jnp.dot(jnp.dot(jnp.linalg.inv(x), Phi_Rk), Z_orig.T)
         W[0, :] = 0  # do not remove the intercept
-        Z_corr -= np.dot(W.T, Phi_Rk)
-    Z_cos = Z_corr / np.linalg.norm(Z_corr, ord=2, axis=0)
+        Z_corr -= jnp.dot(W.T, Phi_Rk)
+    Z_cos = Z_corr / jnp.linalg.norm(Z_corr, ord=2, axis=0)
     return Z_cos, Z_corr, W, Phi_Rk
 
 
@@ -38,20 +30,18 @@ def stdscale_quantile_celing(_adata, max_value=None, quantile_thresh=None):
     sc.pp.scale(_adata, zero_center=False, max_value=max_value)
     if quantile_thresh is not None:
         if issparse(_adata.X):
-            threshval = np.quantile(np.array(_adata.X.todense()).reshape(-1), quantile_thresh)
+            threshval = jnp.quantile(_adata.X.toarray().ravel(), quantile_thresh)
         else:
-            threshval = np.quantile(_adata.X.reshape(-1), quantile_thresh)
+            threshval = jnp.quantile(_adata.X.ravel(), quantile_thresh)
 
         _adata.X[_adata.X > threshval] = threshval
 
 
 def make_count_hist(adata, num_cells=1000):
     z = adata.X[:num_cells, :].todense()
-    y = np.array(z).reshape(-1)
-    (fig, ax) = plt.subplots()
+    y = jnp.array(z).ravel()
+    (_, ax) = plt.subplots()
     _ = ax.hist(y[y > 0], bins=100)
-    del z
-    del y
     ax.set_title("Quantile thresholded normalized count distribution")
 
 
@@ -70,7 +60,7 @@ class Preprocess:
 
         """
 
-        random.seed(random_seed)
+        np.random.seed(random_seed)
 
     def filter_adata(
         self,
@@ -113,14 +103,14 @@ class Preprocess:
         if min_cells_per_gene is not None:
             sc.pp.filter_genes(_adata, min_cells=min_cells_per_gene)
 
-        _adata.obs["n_counts"] = np.asarray(_adata.X.sum(axis=1)).squeeze()
+        _adata.obs["n_counts"] = jnp.asarray(_adata.X.sum(axis=1)).squeeze()
 
         if makeplots:
-            (fig, ax) = plt.subplots()
-            _ = ax.hist(_adata.obs["n_counts"].apply(np.log10), bins=100)
+            (_, ax) = plt.subplots()
+            _ = ax.hist(_adata.obs["n_counts"].apply(jnp.log10), bins=100)
             ax.set_title("log10 n_counts")
             ylim = ax.get_ylim()
-            ax.vlines(x=np.log10(min_cells_per_gene), ymin=ylim[0], ymax=ylim[1])
+            ax.vlines(x=jnp.log10(min_cells_per_gene), ymin=ylim[0], ymax=ylim[1])
             ax.set_ylim(ylim)
 
         if min_counts_per_cell is not None:
@@ -128,12 +118,12 @@ class Preprocess:
 
         mt_genes = [x for x in _adata.var.index if "MT-" in x]
         if filter_mito_thresh is not None:
-            num_mito = np.asarray(_adata[:, mt_genes].X.sum(axis=1)).squeeze()
+            num_mito = jnp.asarray(_adata[:, mt_genes].X.sum(axis=1)).squeeze()
             pct_mito = num_mito / _adata.obs["n_counts"]
             _adata.obs["pct_mito"] = pct_mito
 
             if makeplots:
-                (fig, ax) = plt.subplots()
+                (_, ax) = plt.subplots()
                 _ = ax.hist(_adata.obs["pct_mito"], bins=100)
                 ax.title("pct_mito")
 
@@ -141,14 +131,14 @@ class Preprocess:
 
         tofilter = []
         if filter_dot_genes:
-            dot_genes = [x for x in _adata.var.index if "." in x]
+            dot_genes = _adata.var.index[_adata.var.index.str.contains(".", regex=False)]
             tofilter = dot_genes
 
         if filter_mito_genes:
             tofilter += mt_genes
 
-        ind = ~_adata.var.index.isin(tofilter)
-        _adata = _adata[:, ind]
+        # ind = ~_adata.var.index.isin(tofilter)
+        _adata = _adata[:, ~tofilter]
         return _adata
 
     def preprocess_for_cnmf(
@@ -246,7 +236,7 @@ class Preprocess:
             if adata_ADT.shape[0] != adata_RNA.shape[0]:
                 msg = "ADT and RNA AnnDatas don't have the same number of cells"
                 raise Exception(msg)
-            elif np.sum(adata_ADT.obs.index != adata_RNA.obs.index) > 0:
+            elif jnp.sum(adata_ADT.obs.index != adata_RNA.obs.index) > 0:
                 msg = "Inconsistency of the index for the ADT and RNA AnnDatas"
                 raise Exception(msg)
 
@@ -436,7 +426,7 @@ class Preprocess:
             harmony_res.Phi_moe,
             harmony_res.lamb,
         )
-        X_corr = np.array(X_corr.T)
+        X_corr = jnp.array(X_corr.T)
 
         X_corr[X_corr < 0] = 0
 
@@ -494,7 +484,7 @@ class Preprocess:
         res = pd.Series(res, index=_adata.var.index)
         res = res.sort_values(ascending=False)
         resdf = pd.DataFrame(
-            [res.values, np.arange(res.shape[0])],
+            [res.values, jnp.arange(res.shape[0])],
             columns=res.index,
             index=["MI", "MI_Rank"],
         ).T
