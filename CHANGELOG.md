@@ -8,3 +8,4 @@
 - Simplified a number of functions
     - Removing unnecessary conversions of arrays to `pandas.Series`
 - Combined `cnmf.get_highvar_genes` and `cnmf.get_highvar_genes_sparse`
+- Revert a couple of instances of numpy -> jax.numpy and introduce using memmapped files
